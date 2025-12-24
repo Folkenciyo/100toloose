@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'JetBrains Mono', monospace;
+  background-color: #0a0a0f;
+  color: #e0e0e0;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #12121a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2a3a;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00ff88;
+}
+
+/* Glowing effects */
+.glow-green {
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.3),
+              0 0 20px rgba(0, 255, 136, 0.2),
+              0 0 30px rgba(0, 255, 136, 0.1);
+}
+
+.glow-red {
+  box-shadow: 0 0 10px rgba(255, 51, 102, 0.3),
+              0 0 20px rgba(255, 51, 102, 0.2),
+              0 0 30px rgba(255, 51, 102, 0.1);
+}
+
+.glow-blue {
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.3),
+              0 0 20px rgba(0, 212, 255, 0.2),
+              0 0 30px rgba(0, 212, 255, 0.1);
+}
+
+/* Text glow */
+.text-glow-green {
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.5),
+               0 0 20px rgba(0, 255, 136, 0.3);
+}
+
+.text-glow-red {
+  text-shadow: 0 0 10px rgba(255, 51, 102, 0.5),
+               0 0 20px rgba(255, 51, 102, 0.3);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #00ff88 0%, #00d4ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card hover effect */
+.card-hover {
+  transition: all 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 40px rgba(0, 255, 136, 0.1);
+}
+
+/* Button styles */
+.btn-primary {
+  @apply bg-gradient-to-r from-cyber-primary to-cyber-secondary text-cyber-bg font-semibold py-2 px-6 rounded-lg transition-all duration-300;
+}
+
+.btn-primary:hover {
+  @apply opacity-90 transform scale-105;
+  box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+}
+
+/* Input styles */
+.input-cyber {
+  @apply bg-cyber-surface border border-cyber-border rounded-lg px-4 py-3 text-cyber-text focus:outline-none focus:border-cyber-primary transition-all duration-300;
+}
+
+.input-cyber:focus {
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.2);
+}
+
+/* Animated background grid */
+.bg-grid {
+  background-image: 
+    linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+/* Pulse animation for live indicators */
+@keyframes pulse-live {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.pulse-live {
+  animation: pulse-live 2s ease-in-out infinite;
+}
+
+/* Number animations */
+.number-up {
+  color: #00ff88;
+}
+
+.number-down {
+  color: #ff3366;
+}
+
+

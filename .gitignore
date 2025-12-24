@@ -1,0 +1,90 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+*.log
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Docker
+*.log
+
+# Database
+*.sql
+*.dump
+
+# Trading logs
+logs/
+*.log
+
+# Gradle (si existe)
+.gradle/
+gradle/
+build/
+.gradlew
+.gradlew.bat
+
+# Node modules (ya está pero por si acaso)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python cache
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.egg-info/
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-*
+
+# Docker volumes
+data/
+volumes/
+
+# Database dumps
+*.sql
+*.dump
+*.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+
