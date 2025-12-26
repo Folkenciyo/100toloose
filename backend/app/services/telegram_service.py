@@ -36,7 +36,8 @@ class TelegramService:
             "parse_mode": parse_mode
         }
         
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json=payload) as response:
                 if response.status != 200:
                     error_data = await response.json() if response.content_type == 'application/json' else {}
@@ -46,7 +47,8 @@ class TelegramService:
                     # Crear mensaje de error más descriptivo
                     error_msg = f"Telegram API error ({error_code}): {error_description}"
                     raise Exception(error_msg)
-                return await response.json()
+                result = await response.json()
+                return result
     
     async def send_trade_notification(
         self,
@@ -57,11 +59,30 @@ class TelegramService:
         profit_loss: Optional[float] = None
     ):
         """Send a trade notification to Telegram"""
-        emoji = "🟢" if trade_type == "buy" else "🔴"
-        
-        if profit_loss is not None:
-            pnl_emoji = "✅" if profit_loss >= 0 else "❌"
+        if trade_type == "close":
+            # Notificación de cierre de trade
+            if profit_loss is not None:
+                pnl_emoji = "✅" if profit_loss >= 0 else "❌"
+                pnl_value = profit_loss
+            else:
+                pnl_emoji = "➖"
+                pnl_value = 0.0
+            
+            pnl_percent = (pnl_value / (price * quantity)) * 100 if price * quantity > 0 else 0.0
+            
             message = f"""
+🔒 <b>Trade Cerrado</b>
+
+<b>Símbolo:</b> {symbol}
+<b>Precio de Salida:</b> ${price:.2f}
+<b>Cantidad:</b> {quantity:.6f}
+<b>P&L:</b> {pnl_emoji} ${pnl_value:.2f} ({pnl_percent:+.2f}%)
+            """
+        else:
+            emoji = "🟢" if trade_type == "buy" else "🔴"
+            if profit_loss is not None:
+                pnl_emoji = "✅" if profit_loss >= 0 else "❌"
+                message = f"""
 {emoji} <b>Trade Notification</b>
 
 <b>Type:</b> {trade_type.upper()}
@@ -69,16 +90,16 @@ class TelegramService:
 <b>Price:</b> ${price:.8f}
 <b>Quantity:</b> {quantity:.8f}
 <b>P&L:</b> {pnl_emoji} ${profit_loss:.2f}
-            """
-        else:
-            message = f"""
+                """
+            else:
+                message = f"""
 {emoji} <b>Trade Opened</b>
 
 <b>Type:</b> {trade_type.upper()}
 <b>Symbol:</b> {symbol}
 <b>Price:</b> ${price:.8f}
 <b>Quantity:</b> {quantity:.8f}
-            """
+                """
         
         await self.send_message(message.strip())
     

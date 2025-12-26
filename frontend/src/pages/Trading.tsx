@@ -266,7 +266,7 @@ export default function Trading() {
             />
           </div>
           <div className="space-y-2 max-h-[600px] overflow-y-auto">
-            {filteredSymbols.slice(0, 20).map((symbol) => (
+            {filteredSymbols.map((symbol) => (
               <button
                 key={symbol}
                 onClick={() => setSelectedSymbol(symbol)}

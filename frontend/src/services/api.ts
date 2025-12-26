@@ -1,8 +1,9 @@
 import axios from 'axios'
 import { logger } from './logger'
 
-// En desarrollo usa puerto 8000 directo, en producción usa NGINX (puerto 80)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost'
+// En desarrollo usa el proxy de Vite (/api), en producción usa NGINX
+// Si VITE_API_URL está definido, úsalo; si no, usa ruta relativa para el proxy
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 const api = axios.create({
   baseURL: `${API_URL}/api/v1`,
@@ -94,6 +95,10 @@ export const tradesApi = {
     logger.info(`Closing trade #${id}`)
     return api.post(`/trades/${id}/close`)
   },
+  closeTrade: (id: number) => {
+    logger.info(`Closing trade #${id}`)
+    return api.post(`/trades/${id}/close`)
+  },
 }
 
 export const strategiesApi = {
@@ -128,6 +133,11 @@ export const botApi = {
 
 export const dashboardApi = {
   get: () => api.get('/users/dashboard'),
+}
+
+export const usersApi = {
+  updateTradingMode: (mode: { paper_trading: boolean }) => api.put('/users/trading-mode', mode),
+  resetBalance: () => api.put('/users/reset-balance'),
 }
 
 export const logsApi = {

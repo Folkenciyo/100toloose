@@ -69,7 +69,15 @@ async def get_available_symbols(
         symbols = await binance_service.get_exchange_symbols()
         # Filter to USDT pairs only for simplicity
         usdt_symbols = [s for s in symbols if s.endswith("USDT")]
-        return {"symbols": usdt_symbols[:100]}  # Limit to 100 for performance
+        
+        # Priorizar símbolos populares al inicio
+        popular_symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'DOTUSDT', 'MATICUSDT', 'AVAXUSDT']
+        other_symbols = [s for s in usdt_symbols if s not in popular_symbols]
+        
+        # Combinar: populares primero, luego el resto
+        sorted_symbols = popular_symbols + other_symbols
+        
+        return {"symbols": sorted_symbols[:200]}  # Aumentado a 200 para incluir más símbolos
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

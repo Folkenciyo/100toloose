@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from collections import deque
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, update
 
 from app.core.logging_config import logger, trade_logger, deepseek_logger, email_logger, telegram_logger
 from app.core.config import settings
@@ -56,7 +56,7 @@ class RealtimeTradingBot:
         
         # Sistema de resúmenes por email
         self.email_summary_queue: Dict[int, List[Dict]] = {}  # user_id -> lista de trades para resumen
-        self.last_summary_sent: Dict[int, datetime] = {}  # user_id -> última vez que se envió resumen
+        # NOTA: last_summary_sent ahora se guarda en user.last_email_summary_sent (base de datos)
         
         # Estadísticas
         self.stats = {
@@ -477,16 +477,6 @@ class RealtimeTradingBot:
                     self.stats["trades_skipped"] += 1
                     return None
             
-            # Calcular SL y TP
-            if signal == "BUY":
-                stop_loss = price * (1 - strategy.stop_loss_percent / 100)
-                take_profit = price * (1 + strategy.take_profit_percent / 100)
-                trade_type = TradeType.BUY
-            else:
-                stop_loss = price * (1 + strategy.stop_loss_percent / 100)
-                take_profit = price * (1 - strategy.take_profit_percent / 100)
-                trade_type = TradeType.SELL
-            
             # Ejecutar orden en Binance si tiene API keys configuradas
             binance_order_id = None
             actual_executed_price = price
@@ -513,7 +503,18 @@ class RealtimeTradingBot:
                     )
                     
                     binance_order_id = order_response.get("orderId")
-                    actual_executed_price = float(order_response.get("price", price))
+                    # Obtener el precio real de ejecución de los fills
+                    fills = order_response.get("fills", [])
+                    if fills:
+                        # Calcular precio promedio ponderado
+                        total_qty = sum(float(f.get("qty", 0)) for f in fills)
+                        if total_qty > 0:
+                            actual_executed_price = sum(float(f.get("price", 0)) * float(f.get("qty", 0)) for f in fills) / total_qty
+                        else:
+                            actual_executed_price = float(fills[0].get("price", price))
+                    else:
+                        actual_executed_price = float(order_response.get("price", price))
+                    
                     actual_executed_quantity = float(order_response.get("executedQty", quantity))
                     
                     trade_logger.info(f"✅ Binance order executed: OrderID={binance_order_id}, Price=${actual_executed_price:.2f}, Qty={actual_executed_quantity:.6f}")
@@ -525,6 +526,24 @@ class RealtimeTradingBot:
                     # Si falla la orden, no crear el trade
                     self.stats["trades_skipped"] += 1
                     return None
+            
+            # Validar que el precio de entrada sea válido
+            if actual_executed_price <= 0:
+                trade_logger.error(
+                    f"❌ Invalid entry price ({actual_executed_price}) for {symbol}. Trade not created."
+                )
+                self.stats["errors"] += 1
+                return None
+            
+            # Calcular SL y TP con el precio REAL de ejecución (no el estimado)
+            if signal == "BUY":
+                stop_loss = actual_executed_price * (1 - strategy.stop_loss_percent / 100)
+                take_profit = actual_executed_price * (1 + strategy.take_profit_percent / 100)
+                trade_type = TradeType.BUY
+            else:
+                stop_loss = actual_executed_price * (1 + strategy.stop_loss_percent / 100)
+                take_profit = actual_executed_price * (1 - strategy.take_profit_percent / 100)
+                trade_type = TradeType.SELL
             
             # Crear trade
             trade = Trade(
@@ -577,38 +596,34 @@ class RealtimeTradingBot:
                 trade_logger.info(f"   Binance Order ID: {binance_order_id}")
             trade_logger.info("=" * 50)
             
-            return trade  # Retornar el trade creado
-            trade_logger.info(f"✅ TRADE EXECUTED")
-            trade_logger.info(f"   Symbol: {symbol}")
-            trade_logger.info(f"   Type: {signal}")
-            trade_logger.info(f"   Price: ${price:,.2f}")
-            trade_logger.info(f"   Quantity: {quantity:.6f}")
-            trade_logger.info(f"   Value: ${trade_value:,.2f}")
-            trade_logger.info(f"   Stop Loss: ${stop_loss:,.2f}")
-            trade_logger.info(f"   Take Profit: ${take_profit:,.2f}")
-            trade_logger.info(f"   Strategy: {strategy.name}")
-            trade_logger.info(f"   Paper: {'Yes' if user.paper_trading else 'No'}")
-            trade_logger.info("=" * 50)
-            
             # Notificar al cliente
             await client_ws_manager.send_trade_update(str(user.id), {
                 "id": trade.id,
                 "symbol": symbol,
                 "type": signal,
-                "price": price,
-                "quantity": quantity,
+                "price": actual_executed_price,
+                "quantity": actual_executed_quantity,
                 "status": "OPEN"
             })
             
-            # Enviar notificaciones
-            await self._send_trade_notifications(
-                user=user,
-                trade_type=signal.lower(),
-                symbol=symbol,
-                price=price,
-                quantity=quantity,
-                trade_id=trade.id
-            )
+            # Enviar notificaciones (ANTES del return para asegurar que se ejecute)
+            trade_logger.info(f"📱 Preparing to send Telegram notification for trade {trade.id}")
+            try:
+                await self._send_trade_notifications(
+                    user=user,
+                    trade_type=signal.lower(),
+                    symbol=symbol,
+                    price=actual_executed_price,
+                    quantity=actual_executed_quantity,
+                    trade_id=trade.id
+                )
+                trade_logger.info(f"✅ Telegram notification process completed for trade {trade.id}")
+            except Exception as notif_error:
+                trade_logger.error(
+                    f"❌ Error sending notifications for trade {trade.id}: {notif_error}",
+                    exc_info=True
+                )
+                # No fallar el trade por un error de notificación
             
             # Agregar a cola de resumen por email
             if user.summary_email:
@@ -617,7 +632,7 @@ class RealtimeTradingBot:
                 self.email_summary_queue[user.id].append({
                     "symbol": symbol,
                     "type": signal,
-                    "entry_price": price,
+                    "entry_price": actual_executed_price,
                     "exit_price": None,
                     "profit_loss": None,
                     "status": "OPEN",
@@ -625,9 +640,13 @@ class RealtimeTradingBot:
                     "closed_at": None
                 })
             
+            return trade  # Retornar el trade creado
+            
         except Exception as e:
             self.stats["errors"] += 1
-            trade_logger.error(f"❌ Trade execution failed: {e}")
+            trade_logger.error(f"❌ Trade execution failed: {e}", exc_info=True)
+            # Asegurar que las notificaciones se envíen incluso si hay un error parcial
+            # (solo si el trade se creó pero falló algo después)
     
     async def _check_price_triggers(self, symbol: str, price: float):
         """Verifica SL/TP para trades abiertos en tiempo real"""
@@ -641,26 +660,65 @@ class RealtimeTradingBot:
             trades = result.scalars().all()
             
             for trade in trades:
+                # Si no hay entry_price válido, no podemos verificar stop loss correctamente
+                if not trade.entry_price or trade.entry_price <= 0:
+                    trade_logger.warning(
+                        f"⚠️ Trade {trade.id} ({trade.symbol}) has invalid entry_price ({trade.entry_price}). "
+                        f"Cannot verify stop loss/take profit. Current price: ${price:.2f}"
+                    )
+                    continue
+                
                 should_close = False
                 reason = ""
                 
                 if trade.trade_type == TradeType.BUY:
+                    # Para BUY: cierra si precio cae por debajo del stop loss o sube por encima del take profit
                     if trade.stop_loss and price <= trade.stop_loss:
                         should_close = True
                         reason = "STOP_LOSS"
+                        trade_logger.info(
+                            f"🛑 STOP LOSS TRIGGERED | Trade {trade.id} | {trade.symbol} | "
+                            f"Price: ${price:.2f} <= Stop Loss: ${trade.stop_loss:.2f} | "
+                            f"Entry: ${trade.entry_price:.2f} | Loss: {((price - trade.entry_price) / trade.entry_price * 100):.2f}%"
+                        )
                     elif trade.take_profit and price >= trade.take_profit:
                         should_close = True
                         reason = "TAKE_PROFIT"
-                else:
+                        trade_logger.info(
+                            f"🎯 TAKE PROFIT TRIGGERED | Trade {trade.id} | {trade.symbol} | "
+                            f"Price: ${price:.2f} >= Take Profit: ${trade.take_profit:.2f} | "
+                            f"Entry: ${trade.entry_price:.2f} | Gain: {((price - trade.entry_price) / trade.entry_price * 100):.2f}%"
+                        )
+                else:  # SELL
+                    # Para SELL: cierra si precio sube por encima del stop loss o cae por debajo del take profit
                     if trade.stop_loss and price >= trade.stop_loss:
                         should_close = True
                         reason = "STOP_LOSS"
+                        trade_logger.info(
+                            f"🛑 STOP LOSS TRIGGERED | Trade {trade.id} | {trade.symbol} | "
+                            f"Price: ${price:.2f} >= Stop Loss: ${trade.stop_loss:.2f} | "
+                            f"Entry: ${trade.entry_price:.2f} | Loss: {((trade.entry_price - price) / trade.entry_price * 100):.2f}%"
+                        )
                     elif trade.take_profit and price <= trade.take_profit:
                         should_close = True
                         reason = "TAKE_PROFIT"
+                        trade_logger.info(
+                            f"🎯 TAKE PROFIT TRIGGERED | Trade {trade.id} | {trade.symbol} | "
+                            f"Price: ${price:.2f} <= Take Profit: ${trade.take_profit:.2f} | "
+                            f"Entry: ${trade.entry_price:.2f} | Gain: {((trade.entry_price - price) / trade.entry_price * 100):.2f}%"
+                        )
                 
                 if should_close:
                     await self._close_trade(db, trade, price, reason)
+                else:
+                    # Log periódico para debug (cada 10 verificaciones aproximadamente)
+                    if trade.id % 10 == 0:
+                        trade_logger.debug(
+                            f"📊 Price check | Trade {trade.id} | {trade.symbol} | "
+                            f"Price: ${price:.2f} | Entry: ${trade.entry_price:.2f} | "
+                            f"SL: ${trade.stop_loss:.2f if trade.stop_loss else 'N/A'} | "
+                            f"TP: ${trade.take_profit:.2f if trade.take_profit else 'N/A'}"
+                        )
     
     async def _close_trade(self, db: AsyncSession, trade: Trade, 
                           exit_price: float, reason: str):
@@ -699,27 +757,93 @@ class RealtimeTradingBot:
                     use_testnet=user.paper_trading
                 )
                 
-                trade_logger.info(f"📡 Closing order on Binance {'Testnet' if user.paper_trading else 'Real'}: {close_side} {trade.symbol}")
-                
-                # Ejecutar orden MARKET para cerrar
-                close_order_response = await binance_service.place_order(
-                    symbol=trade.symbol,
-                    side=close_side,
-                    order_type="MARKET",
-                    quantity=trade.quantity
-                )
-                
-                binance_close_order_id = close_order_response.get("orderId")
-                actual_exit_price = float(close_order_response.get("price", exit_price))
-                actual_exit_quantity = float(close_order_response.get("executedQty", trade.quantity))
-                
-                trade_logger.info(f"✅ Binance close order executed: OrderID={binance_close_order_id}, Price=${actual_exit_price:.2f}")
-                
-                await binance_service.close()
+                # Verificar balance antes de intentar cerrar
+                if close_side == "BUY":
+                    # Para cerrar un SELL, necesitamos comprar, verificar balance
+                    try:
+                        await binance_service.initialize()
+                        balances = await binance_service.get_account_balance()
+                        await binance_service.close()
+                        
+                        # Obtener el símbolo base (ej: BNBUSDT -> USDT)
+                        quote_asset = trade.symbol[-4:]  # Asume que termina en USDT
+                        required_balance = exit_price * trade.quantity
+                        available_balance = balances.get(quote_asset, {}).get("free", 0)
+                        
+                        if available_balance < required_balance:
+                            trade_logger.warning(
+                                f"⚠️ Insufficient balance to close SELL trade {trade.id} ({trade.symbol}): "
+                                f"Required ${required_balance:.2f}, Available ${available_balance:.2f}. "
+                                f"Closing trade manually with current market price."
+                            )
+                            # Usar el precio de salida proporcionado (precio actual del mercado)
+                            actual_exit_price = exit_price
+                            actual_exit_quantity = trade.quantity
+                            binance_close_order_id = None
+                        else:
+                            # Hay balance suficiente, intentar cerrar
+                            await binance_service.initialize()
+                            trade_logger.info(f"📡 Closing order on Binance {'Testnet' if user.paper_trading else 'Real'}: {close_side} {trade.symbol}")
+                            
+                            # Ejecutar orden MARKET para cerrar
+                            close_order_response = await binance_service.place_order(
+                                symbol=trade.symbol,
+                                side=close_side,
+                                order_type="MARKET",
+                                quantity=trade.quantity
+                            )
+                            
+                            binance_close_order_id = close_order_response.get("orderId")
+                            actual_exit_price = float(close_order_response.get("price", exit_price))
+                            actual_exit_quantity = float(close_order_response.get("executedQty", trade.quantity))
+                            
+                            trade_logger.info(f"✅ Binance close order executed: OrderID={binance_close_order_id}, Price=${actual_exit_price:.2f}")
+                            await binance_service.close()
+                    except Exception as balance_error:
+                        trade_logger.warning(
+                            f"⚠️ Could not verify balance for trade {trade.id}: {balance_error}. "
+                            f"Closing trade manually with current market price."
+                        )
+                        actual_exit_price = exit_price
+                        actual_exit_quantity = trade.quantity
+                        binance_close_order_id = None
+                else:
+                    # Para cerrar un BUY, vendemos (no necesitamos verificar balance de USDT)
+                    await binance_service.initialize()
+                    trade_logger.info(f"📡 Closing order on Binance {'Testnet' if user.paper_trading else 'Real'}: {close_side} {trade.symbol}")
+                    
+                    # Ejecutar orden MARKET para cerrar
+                    close_order_response = await binance_service.place_order(
+                        symbol=trade.symbol,
+                        side=close_side,
+                        order_type="MARKET",
+                        quantity=trade.quantity
+                    )
+                    
+                    binance_close_order_id = close_order_response.get("orderId")
+                    actual_exit_price = float(close_order_response.get("price", exit_price))
+                    actual_exit_quantity = float(close_order_response.get("executedQty", trade.quantity))
+                    
+                    trade_logger.info(f"✅ Binance close order executed: OrderID={binance_close_order_id}, Price=${actual_exit_price:.2f}")
+                    await binance_service.close()
                 
             except Exception as e:
-                trade_logger.error(f"❌ Failed to execute Binance close order: {e}")
-                # Continuar con el cierre aunque falle la orden (para no perder el trade)
+                error_msg = str(e)
+                # Si es error de balance insuficiente, cerrar manualmente
+                if "insufficient balance" in error_msg.lower() or "-2010" in error_msg:
+                    trade_logger.warning(
+                        f"⚠️ Insufficient balance to close trade {trade.id} ({trade.symbol}). "
+                        f"Closing trade manually with current market price: ${exit_price:.2f}"
+                    )
+                    actual_exit_price = exit_price
+                    actual_exit_quantity = trade.quantity
+                    binance_close_order_id = None
+                else:
+                    trade_logger.error(f"❌ Failed to execute Binance close order: {e}")
+                    # Continuar con el cierre aunque falle la orden (para no perder el trade)
+                    actual_exit_price = exit_price
+                    actual_exit_quantity = trade.quantity
+                    binance_close_order_id = None
         
         # Calcular P&L
         if trade.trade_type == TradeType.BUY:
@@ -839,79 +963,143 @@ class RealtimeTradingBot:
     ):
         """Envía notificaciones de trade (Telegram siempre, Email solo resúmenes)"""
         try:
+            # Verificar configuración de Telegram
+            telegram_configured = (
+                user.telegram_enabled and 
+                user.telegram_bot_token and 
+                user.telegram_chat_id
+            )
+            
+            if not telegram_configured:
+                # Log detallado de qué falta
+                missing = []
+                if not user.telegram_enabled:
+                    missing.append("telegram_enabled=False")
+                if not user.telegram_bot_token:
+                    missing.append("bot_token missing")
+                if not user.telegram_chat_id:
+                    missing.append("chat_id missing")
+                
+                telegram_logger.warning(
+                    f"⚠️ Telegram notification SKIPPED for trade {trade_id} ({symbol}): "
+                    f"Missing configuration: {', '.join(missing)}"
+                )
+                return
+            
             # Telegram: todas las notificaciones
-            if user.telegram_enabled and user.telegram_bot_token and user.telegram_chat_id:
-                try:
-                    telegram_service = TelegramService(
-                        bot_token=user.telegram_bot_token,
-                        chat_id=user.telegram_chat_id
+            try:
+                telegram_service = TelegramService(
+                    bot_token=user.telegram_bot_token,
+                    chat_id=user.telegram_chat_id
+                )
+                
+                if profit_loss is not None:
+                    # Trade cerrado
+                    telegram_logger.info(
+                        f"📱 Sending Telegram notification: CLOSE {symbol} | "
+                        f"P&L: ${profit_loss:.2f} | Trade ID: {trade_id}"
                     )
-                    if profit_loss is not None:
-                        telegram_logger.info(f"📱 Telegram notification sent: {trade_type.upper()} {symbol} | P&L: ${profit_loss:.2f}")
-                        # Trade cerrado
-                        await telegram_service.send_trade_notification(
-                            trade_type=trade_type,
-                            symbol=symbol,
-                            price=price,
-                            quantity=quantity,
-                            profit_loss=profit_loss
-                        )
-                    else:
-                        telegram_logger.info(f"📱 Telegram notification sent: {trade_type.upper()} {symbol} | Price: ${price:.2f}")
-                        # Trade abierto
-                        await telegram_service.send_trade_notification(
-                            trade_type=trade_type,
-                            symbol=symbol,
-                            price=price,
-                            quantity=quantity
-                        )
-                except Exception as e:
-                    telegram_logger.error(f"❌ Failed to send Telegram notification: {e}")
-                    trade_logger.error(f"Failed to send Telegram notification: {e}")
+                    await telegram_service.send_trade_notification(
+                        trade_type="close",  # Usar "close" para trades cerrados
+                        symbol=symbol,
+                        price=price,
+                        quantity=quantity,
+                        profit_loss=profit_loss
+                    )
+                    telegram_logger.info(f"✅ Telegram notification sent successfully for trade {trade_id}")
+                else:
+                    # Trade abierto
+                    telegram_logger.info(
+                        f"📱 Sending Telegram notification: OPEN {trade_type.upper()} {symbol} | "
+                        f"Price: ${price:.2f} | Trade ID: {trade_id}"
+                    )
+                    await telegram_service.send_trade_notification(
+                        trade_type=trade_type,  # "buy" o "sell"
+                        symbol=symbol,
+                        price=price,
+                        quantity=quantity
+                    )
+                    telegram_logger.info(f"✅ Telegram notification sent successfully for trade {trade_id}")
+                    
+            except Exception as e:
+                telegram_logger.error(
+                    f"❌ Failed to send Telegram notification for trade {trade_id} ({symbol}): {e}",
+                    exc_info=True
+                )
+                trade_logger.error(f"Failed to send Telegram notification: {e}")
             
             # Email: NO enviamos notificaciones individuales, solo resúmenes
             # Los resúmenes se envían periódicamente o cuando se alcanza un número de trades
             
         except Exception as e:
-            trade_logger.error(f"Error sending notifications: {e}")
+            trade_logger.error(f"Error sending notifications: {e}", exc_info=True)
     
     async def _check_and_send_email_summary(self, user: User):
-        """Verifica si debe enviar resumen por email y lo envía si es necesario"""
+        """Verifica si debe enviar resumen por email y lo envía si es necesario.
+        SOLO envía un email cada 24 horas para evitar spam."""
         try:
             if not user.smtp_enabled or not user.summary_email or not user.smtp_host:
                 return
             
-            # Verificar condiciones para enviar resumen
+            # Verificar si han pasado 24 horas desde el último resumen
             should_send = False
+            reason = ""
             
-            # Condición 1: Han pasado 24 horas desde el último resumen
-            if user.id in self.last_summary_sent:
-                time_since_last = datetime.utcnow() - self.last_summary_sent[user.id]
+            # Usar el campo de la base de datos en lugar del diccionario en memoria
+            if user.last_email_summary_sent:
+                time_since_last = datetime.utcnow() - user.last_email_summary_sent
                 if time_since_last >= timedelta(hours=24):
                     should_send = True
+                    reason = f"24 hours elapsed (last sent: {user.last_email_summary_sent})"
+                else:
+                    # No enviar - aún no han pasado 24 horas
+                    hours_remaining = 24 - (time_since_last.total_seconds() / 3600)
+                    email_logger.debug(
+                        f"⏳ Email summary skipped for {user.summary_email} | "
+                        f"Last sent: {user.last_email_summary_sent} | "
+                        f"Hours remaining: {hours_remaining:.1f}"
+                    )
+                    return
             else:
-                # Primera vez, enviar si hay trades
-                if user.id in self.email_summary_queue and len(self.email_summary_queue[user.id]) > 0:
-                    should_send = True
-            
-            # Condición 2: Hay 10 o más trades en la cola
-            if user.id in self.email_summary_queue:
-                if len(self.email_summary_queue[user.id]) >= 10:
-                    should_send = True
+                # Primera vez, enviar si hay al menos 1 trade cerrado
+                if user.id in self.email_summary_queue:
+                    closed_trades = [t for t in self.email_summary_queue[user.id] if t.get("status") == "CLOSED"]
+                    if len(closed_trades) > 0:
+                        should_send = True
+                        reason = "first time with closed trades"
+                    else:
+                        # No hay trades cerrados aún, no enviar
+                        return
+                else:
+                    # No hay cola, no enviar
+                    return
             
             if not should_send:
                 return
             
-            # Preparar datos del resumen
-            trades = self.email_summary_queue.get(user.id, [])
-            if not trades:
+            # Preparar datos del resumen - solo incluir trades CERRADOS
+            all_trades = self.email_summary_queue.get(user.id, [])
+            if not all_trades:
                 return
             
-            # Calcular estadísticas
+            # Filtrar solo trades cerrados para el resumen
+            closed_trades = [t for t in all_trades if t.get("status") == "CLOSED"]
+            if not closed_trades:
+                # Si no hay trades cerrados, no enviar resumen
+                return
+            
+            trades = closed_trades
+            
+            # Calcular estadísticas solo de trades cerrados
             total_trades = len(trades)
             winning_trades = sum(1 for t in trades if t.get("profit_loss", 0) > 0)
             losing_trades = sum(1 for t in trades if t.get("profit_loss", 0) < 0)
             total_profit_loss = sum(t.get("profit_loss", 0) or 0 for t in trades)
+            
+            email_logger.info(
+                f"📧 Preparing to send email summary to {user.summary_email} | "
+                f"Reason: {reason} | Closed trades: {total_trades} | Open trades in queue: {len(all_trades) - total_trades}"
+            )
             
             # Enviar resumen
             try:
@@ -934,12 +1122,30 @@ class RealtimeTradingBot:
                     current_balance=user.current_balance
                 )
                 
-                email_logger.info(f"📧 Email summary sent to {user.summary_email} | {total_trades} trades | P&L: ${total_profit_loss:.2f}")
+                email_logger.info(
+                    f"📧 Email summary sent to {user.summary_email} | "
+                    f"Closed trades: {total_trades} | P&L: ${total_profit_loss:.2f}"
+                )
                 
-                # Limpiar cola y actualizar timestamp
-                self.email_summary_queue[user.id] = []
-                self.last_summary_sent[user.id] = datetime.utcnow()
+                # ACTUALIZAR timestamp en la base de datos PRIMERO para evitar envíos duplicados
+                # Usar UPDATE directo para evitar conflictos de sesión
+                async with self.db_session_factory() as db:
+                    await db.execute(
+                        update(User)
+                        .where(User.id == user.id)
+                        .values(last_email_summary_sent=datetime.utcnow())
+                    )
+                    await db.commit()
+                    # Actualizar el objeto user en memoria
+                    user.last_email_summary_sent = datetime.utcnow()
                 
+                # Limpiar solo trades CERRADOS de la cola, mantener los abiertos
+                open_trades = [t for t in all_trades if t.get("status") == "OPEN"]
+                self.email_summary_queue[user.id] = open_trades
+                
+                email_logger.info(
+                    f"✅ Email summary sent | Remaining open trades in queue: {len(open_trades)}"
+                )
                 trade_logger.info(f"📧 Email summary sent to {user.summary_email}")
                 
             except Exception as e:
