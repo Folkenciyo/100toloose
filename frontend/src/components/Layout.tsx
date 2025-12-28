@@ -8,9 +8,7 @@ import {
   Wallet,
   Activity,
   FileText,
-  Settings,
-  PieChart,
-  Clock
+  Settings
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useLanguage } from '../i18n'
@@ -28,10 +26,8 @@ export default function Layout() {
 
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: t.nav.dashboard },
-    { path: '/balance-distribution', icon: PieChart, label: t.nav.balanceDistribution },
     { path: '/trading', icon: TrendingUp, label: t.nav.trading },
     { path: '/strategies', icon: Brain, label: t.nav.strategies },
-    { path: '/active-trades', icon: Clock, label: t.nav.activeTrades },
     { path: '/logs', icon: FileText, label: t.nav.logs },
     { path: '/profile', icon: Settings, label: t.nav.profile },
   ]

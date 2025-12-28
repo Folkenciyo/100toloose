@@ -5,10 +5,8 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Trading from './pages/Trading'
 import Strategies from './pages/Strategies'
-import ActiveTrades from './pages/ActiveTrades'
 import Logs from './pages/Logs'
 import Profile from './pages/Profile'
-import BalanceDistribution from './pages/BalanceDistribution'
 import Layout from './components/Layout'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -30,10 +28,8 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="balance-distribution" element={<BalanceDistribution />} />
         <Route path="trading" element={<Trading />} />
         <Route path="strategies" element={<Strategies />} />
-        <Route path="active-trades" element={<ActiveTrades />} />
         <Route path="logs" element={<Logs />} />
         <Route path="profile" element={<Profile />} />
       </Route>

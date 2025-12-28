@@ -180,10 +180,8 @@ export default function Strategies() {
         max_open_trades: 3,
       })
       fetchData()
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to create strategy:', error)
-      const errorMessage = error.response?.data?.detail || error.message || 'Error al crear la estrategia'
-      alert(errorMessage)
     }
   }
 
@@ -489,8 +487,9 @@ export default function Strategies() {
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-cyber-surface border border-cyber-border rounded-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            className="bg-cyber-surface border border-cyber-border rounded-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto overflow-x-visible"
             onClick={(e) => e.stopPropagation()}
+            style={{ overflow: 'visible' }}
           >
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold">{t.strategies.createStrategy}</h2>
@@ -596,22 +595,10 @@ export default function Strategies() {
                   <input
                     type="number"
                     value={formData.stop_loss_percent}
-                    onChange={(e) => {
-                      const value = parseFloat(e.target.value) || 0
-                      if (value >= 0.1 && value <= 50) {
-                        setFormData({ ...formData, stop_loss_percent: value })
-                      }
-                    }}
+                    onChange={(e) => setFormData({ ...formData, stop_loss_percent: parseFloat(e.target.value) })}
                     className="input-cyber w-full"
-                    step="0.1"
-                    min="0.1"
-                    max="50"
+                    step="0.5"
                   />
-                  {formData.stop_loss_percent < 0.1 && (
-                    <p className="text-xs text-cyber-danger mt-1">
-                      ⚠️ Mínimo 0.1% (considera volatilidad y comisiones)
-                    </p>
-                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2 mb-2">
@@ -625,22 +612,10 @@ export default function Strategies() {
                   <input
                     type="number"
                     value={formData.take_profit_percent}
-                    onChange={(e) => {
-                      const value = parseFloat(e.target.value) || 0
-                      if (value >= 0.1 && value <= 100) {
-                        setFormData({ ...formData, take_profit_percent: value })
-                      }
-                    }}
+                    onChange={(e) => setFormData({ ...formData, take_profit_percent: parseFloat(e.target.value) })}
                     className="input-cyber w-full"
-                    step="0.1"
-                    min="0.1"
-                    max="100"
+                    step="0.5"
                   />
-                  {formData.take_profit_percent < 0.1 && (
-                    <p className="text-xs text-cyber-danger mt-1">
-                      ⚠️ Mínimo 0.1% (considera volatilidad y comisiones)
-                    </p>
-                  )}
                 </div>
               </div>
 

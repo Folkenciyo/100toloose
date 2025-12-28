@@ -7,6 +7,7 @@ import {
   DollarSign,
   Target,
   Zap,
+  Clock,
   BarChart3,
   CheckCircle,
   Settings,
@@ -15,7 +16,7 @@ import {
   PlayCircle,
   PauseCircle
 } from 'lucide-react'
-import { dashboardApi, deepseekApi } from '../services/api'
+import { dashboardApi, tradesApi, deepseekApi } from '../services/api'
 import { useLanguage, interpolate } from '../i18n'
 
 interface DashboardData {
@@ -27,13 +28,6 @@ interface DashboardData {
     initial_balance: number
     current_balance: number
     balance_synced?: boolean  // Indica si el balance viene de Binance
-    balance_breakdown?: Array<{  // Distribución de fondos por criptomoneda
-      asset: string
-      amount: number
-      value_usdt: number
-      free: number
-      locked: number
-    }>
     profit_loss: number
     profit_loss_percent: number
   }
@@ -75,11 +69,6 @@ interface DashboardData {
     last_trade_at: string | null
     created_at: string | null
   }>
-  trades_without_strategy?: {
-    count: number
-    symbols: string[]
-    strategy_names: string[]
-  }
 }
 
 interface Trade {
@@ -94,82 +83,36 @@ interface Trade {
   profit_loss_percent: number
   strategy_name: string
   created_at: string
-  stop_loss?: number | null
-  take_profit?: number | null
-  // Campos adicionales para trades abiertos
-  current_price?: number | null
-  current_value?: number | null
-  current_pnl?: number | null
-  current_pnl_percent?: number | null
-  invested_value?: number | null
 }
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
+  const [recentTrades, setRecentTrades] = useState<Trade[]>([])
   const [deepseekDecisions, setDeepseekDecisions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const { t } = useLanguage()
 
   useEffect(() => {
-    let isMounted = true
-    let timeoutId: NodeJS.Timeout | null = null
-    
     const fetchData = async () => {
       try {
-        const [dashboardRes, deepseekRes] = await Promise.all([
-          dashboardApi.get().catch((err) => {
-            console.error('Dashboard API error:', err)
-            throw err
-          }),
+        const [dashboardRes, tradesRes, deepseekRes] = await Promise.all([
+          dashboardApi.get(),
+          tradesApi.getAll(),
           deepseekApi.getDecisions(5, 0, true).catch(() => ({ data: { decisions: [] } }))
         ])
-        
-        // Solo actualizar si el componente sigue montado
-        if (isMounted) {
-          console.log('Dashboard data:', dashboardRes.data)
-          console.log('Strategies:', dashboardRes.data.strategies)
-          console.log('Strategies length:', dashboardRes.data.strategies?.length || 0)
-          setData(dashboardRes.data)
-          setDeepseekDecisions(deepseekRes.data.decisions || [])
-          setLoading(false)
-          
-          // Limpiar timeout si los datos se cargaron exitosamente
-          if (timeoutId) {
-            clearTimeout(timeoutId)
-            timeoutId = null
-          }
-        }
+        console.log('Dashboard data:', dashboardRes.data)
+        console.log('Strategies:', dashboardRes.data.strategies)
+        console.log('Strategies length:', dashboardRes.data.strategies?.length || 0)
+        setData(dashboardRes.data)
+        setRecentTrades(tradesRes.data.slice(0, 5))
+        setDeepseekDecisions(deepseekRes.data.decisions || [])
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error)
-        if (isMounted) {
-          setLoading(false)
-          // Solo mostrar alerta si realmente hay un error
-          if (timeoutId) {
-            clearTimeout(timeoutId)
-            timeoutId = null
-          }
-          alert('Error al cargar el dashboard. Por favor, recarga la página.')
-        }
-      }
-    }
-    
-    // Timeout de 30 segundos solo si aún está cargando
-    timeoutId = setTimeout(() => {
-      if (isMounted && loading) {
-        console.error('Dashboard timeout')
+      } finally {
         setLoading(false)
-        alert('El dashboard está tardando demasiado en cargar. Por favor, recarga la página.')
-      }
-    }, 30000)
-    
-    fetchData()
-    
-    return () => {
-      isMounted = false
-      if (timeoutId) {
-        clearTimeout(timeoutId)
       }
     }
+    fetchData()
   }, [])
 
   if (loading) {
@@ -187,7 +130,7 @@ export default function Dashboard() {
   const stats = [
     {
       label: t.dashboard.totalBalance,
-      value: `$${data?.user.current_balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: true }) || '0'}`,
+      value: `$${data?.user.current_balance.toLocaleString() || '0'}`,
       change: data?.user.profit_loss_percent || 0,
       icon: DollarSign,
       color: 'cyber-primary'
@@ -314,10 +257,64 @@ export default function Dashboard() {
             </div>
           </div>
         </motion.div>
-      </div>
 
-      {/* DeepSeek Decisions */}
-      {deepseekDecisions.length > 0 && (
+        {/* Recent Trades */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="bg-cyber-surface border border-cyber-border rounded-xl p-6"
+        >
+          <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
+            <Clock className="text-cyber-secondary" size={20} />
+            {t.dashboard.recentTrades}
+          </h2>
+          {recentTrades.length === 0 ? (
+            <div className="text-center py-8 text-cyber-muted">
+              <Zap size={40} className="mx-auto mb-4 opacity-50" />
+              <p>{t.dashboard.noTradesYet}</p>
+              <p className="text-sm mt-1">{t.dashboard.startTradingToSee}</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {recentTrades.map((trade) => (
+                <div
+                  key={trade.id}
+                  className="flex items-center justify-between p-3 bg-cyber-card rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${
+                      trade.trade_type === 'buy' 
+                        ? 'bg-cyber-primary/20 text-cyber-primary' 
+                        : 'bg-cyber-danger/20 text-cyber-danger'
+                    }`}>
+                      {trade.trade_type === 'buy' ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+                    </div>
+                    <div>
+                      <p className="font-medium">{trade.symbol}</p>
+                      <p className="text-xs text-cyber-muted">
+                        {trade.strategy_name || t.trades.manual}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className={`font-medium ${
+                      trade.profit_loss >= 0 ? 'text-cyber-primary' : 'text-cyber-danger'
+                    }`}>
+                      {trade.profit_loss >= 0 ? '+' : ''}${trade.profit_loss.toFixed(2)}
+                    </p>
+                    <p className="text-xs text-cyber-muted">
+                      {trade.status}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+
+        {/* DeepSeek Decisions */}
+        {deepseekDecisions.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -377,6 +374,7 @@ export default function Dashboard() {
             </div>
           </motion.div>
         )}
+      </div>
 
       {/* Active Strategies Summary */}
       {data && data.strategies && data.strategies.length > 0 && (
@@ -504,38 +502,6 @@ export default function Dashboard() {
                 )}
               </motion.div>
             ))}
-          </div>
-        </motion.div>
-      )}
-
-      {/* Trades Without Active Strategy Warning */}
-      {data && data.trades_without_strategy && data.trades_without_strategy.count > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
-          className="bg-cyber-danger/10 border border-cyber-danger/30 rounded-xl p-6"
-        >
-          <div className="flex items-start gap-3">
-            <Target className="text-cyber-danger mt-1" size={20} />
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold text-cyber-danger mb-2">
-                ⚠️ Trades sin Estrategia Activa
-              </h3>
-              <p className="text-sm text-cyber-muted mb-3">
-                Tienes <strong>{data.trades_without_strategy.count}</strong> trade(s) abierto(s) que no están asociados a ninguna estrategia activa:
-              </p>
-              <div className="space-y-1">
-                {data.trades_without_strategy.symbols.map((symbol, idx) => (
-                  <p key={idx} className="text-sm">
-                    • <strong>{symbol}</strong> - Estrategia: <span className="text-cyber-muted">{data.trades_without_strategy?.strategy_names[idx] || 'Sin estrategia'}</span>
-                  </p>
-                ))}
-              </div>
-              <p className="text-xs text-cyber-muted mt-3">
-                Estos trades pueden haber sido creados manualmente o pertenecer a una estrategia que ya no está activa.
-              </p>
-            </div>
           </div>
         </motion.div>
       )}

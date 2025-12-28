@@ -53,26 +53,11 @@ export const translations = {
       dashboard: 'Panel',
       trading: 'Trading',
       strategies: 'Estrategias',
-      activeTrades: 'Trades',
       logs: 'Registros',
       profile: 'Perfil',
       balance: 'Balance',
       paperTrading: 'Paper Trading',
       liveTrading: 'Trading Real',
-      balanceDistribution: 'La distribución',
-    },
-    
-    // Balance Distribution
-    balanceDistribution: {
-      title: 'La distribución',
-      subtitle: 'Distribución de fondos por criptomoneda',
-      refresh: 'Actualizar',
-      totalBalance: 'Balance Total',
-      breakdown: 'Distribución de Fondos',
-      noData: 'No hay datos de balance',
-      noDataDescription: 'No se encontraron balances. Asegúrate de tener API keys configuradas.',
-      free: 'Libre',
-      locked: 'Bloqueado',
     },
     
     // Dashboard
@@ -84,28 +69,15 @@ export const translations = {
       winRate: 'Tasa de Victoria',
       openTrades: 'Trades Abiertos',
       tradeSummary: 'Resumen de Trades',
+      recentTrades: 'Trades Recientes',
       deepseekDecisions: 'Decisiones DeepSeek AI',
       totalTrades: 'Total de Trades',
       winningTrades: 'Trades Ganadores',
       losingTrades: 'Trades Perdedores',
       bestTrade: 'Mejor Trade',
       worstTrade: 'Peor Trade',
-    },
-    
-    // Active Trades
-    activeTrades: {
-      title: 'Trades',
-      description: 'Monitorea todos tus trades no cerrados en tiempo real',
-      totalOpen: 'Total No Cerrados',
-      noOpenTrades: 'No hay trades activos',
-      startTradingToSee: 'Empieza a operar para ver tus trades',
-      quantity: 'Cantidad',
-      invested: 'Invertido',
-      entryPrice: 'Precio Entrada',
-      currentPrice: 'Precio Actual',
-      currentValue: 'Valor Actual',
-      stopLoss: 'Stop Loss',
-      takeProfit: 'Take Profit',
+      noTradesYet: 'Sin trades aún',
+      startTradingToSee: 'Empieza a operar para ver tu historial',
     },
     
     // Trading
@@ -401,26 +373,11 @@ export const translations = {
       dashboard: 'Dashboard',
       trading: 'Trading',
       strategies: 'Strategies',
-      activeTrades: 'Trades',
       logs: 'Logs',
       profile: 'Profile',
       balance: 'Balance',
       paperTrading: 'Paper Trading',
       liveTrading: 'Live Trading',
-      balanceDistribution: 'Balance Distribution',
-    },
-    
-    // Balance Distribution
-    balanceDistribution: {
-      title: 'Balance Distribution',
-      subtitle: 'Fund distribution by cryptocurrency',
-      refresh: 'Refresh',
-      totalBalance: 'Total Balance',
-      breakdown: 'Balance Breakdown',
-      noData: 'No balance data',
-      noDataDescription: 'No balances found. Make sure you have API keys configured.',
-      free: 'Free',
-      locked: 'Locked',
     },
     
     // Dashboard
@@ -439,23 +396,8 @@ export const translations = {
       losingTrades: 'Losing Trades',
       bestTrade: 'Best Trade',
       worstTrade: 'Worst Trade',
-      balanceBreakdown: 'Balance Distribution',
-    },
-    
-    // Active Trades
-    activeTrades: {
-      title: 'Trades',
-      description: 'Monitor all your non-closed trades in real-time',
-      totalOpen: 'Total Non-Closed',
-      noOpenTrades: 'No active trades',
-      startTradingToSee: 'Start trading to see your trades',
-      quantity: 'Quantity',
-      invested: 'Invested',
-      entryPrice: 'Entry Price',
-      currentPrice: 'Current Price',
-      currentValue: 'Current Value',
-      stopLoss: 'Stop Loss',
-      takeProfit: 'Take Profit',
+      noTradesYet: 'No trades yet',
+      startTradingToSee: 'Start trading to see your history',
     },
     
     // Trading

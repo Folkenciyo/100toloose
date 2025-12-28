@@ -54,7 +54,6 @@ class User(Base):
     summary_email = Column(String(255), nullable=True)  # Email para recibir resúmenes (puede ser diferente del email de login)
     phone_number = Column(String(50), nullable=True)  # Número de teléfono para notificaciones
     platform_user_id = Column(String(100), nullable=True)  # ID de usuario en la plataforma 100toLoose (para referencias internas)
-    last_email_summary_sent = Column(DateTime, nullable=True)  # Timestamp del último resumen por email enviado
     
     # Relationships
     trades = relationship("Trade", back_populates="user")

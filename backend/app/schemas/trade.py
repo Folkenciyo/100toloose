@@ -37,12 +37,6 @@ class TradeResponse(BaseModel):
     opened_at: Optional[datetime]
     closed_at: Optional[datetime]
     is_paper_trade: int
-    # Campos adicionales para trades abiertos (calculados dinámicamente)
-    current_price: Optional[float] = None  # Precio actual del símbolo
-    current_value: Optional[float] = None  # Valor actual en USD (quantity * current_price)
-    current_pnl: Optional[float] = None  # P&L actualizado (no persistido en BD)
-    current_pnl_percent: Optional[float] = None  # P&L porcentual actualizado
-    invested_value: Optional[float] = None  # Valor invertido (quantity * entry_price)
     
     class Config:
         from_attributes = True

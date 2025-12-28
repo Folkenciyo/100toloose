@@ -86,14 +86,7 @@ async def get_strategies_with_status(
                     pnl = (price - open_trade.entry_price) * open_trade.quantity
                 else:
                     pnl = (open_trade.entry_price - price) * open_trade.quantity
-                
-                # Evitar división por cero
-                trade_value = open_trade.entry_price * open_trade.quantity
-                if trade_value > 0:
-                    pnl_percent = (pnl / trade_value) * 100
-                else:
-                    pnl_percent = 0.0
-                
+                pnl_percent = (pnl / (open_trade.entry_price * open_trade.quantity)) * 100
                 symbol_status["open_trade_pnl"] = {
                     "value": round(pnl, 2),
                     "percent": round(pnl_percent, 2),
