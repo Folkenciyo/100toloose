@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from app.core.database import Base
+from app.core.crypto import EncryptedString
 
 
 class User(Base):
@@ -23,29 +24,34 @@ class User(Base):
     paper_trading = Column(Boolean, default=True)  # True = dinero ficticio
     initial_balance = Column(Float, default=10000.0)  # Balance inicial ficticio
     current_balance = Column(Float, default=10000.0)  # Balance actual
+
+    # Gestión de riesgo
+    max_daily_loss_percent = Column(Float, default=5.0)  # % máximo de pérdida diaria sobre initial_balance
+    daily_loss_paused = Column(Boolean, default=False)  # True cuando el límite diario se ha superado
+    daily_loss_reset_at = Column(DateTime, nullable=True)  # Cuándo se reinicia el contador diario
     
-    # Binance Testnet API keys (para Paper Trading)
-    binance_testnet_api_key = Column(String(255), nullable=True)
-    binance_testnet_secret_key = Column(String(255), nullable=True)
-    
-    # Binance Real API keys (para Real Trading)
-    binance_real_api_key = Column(String(255), nullable=True)
-    binance_real_secret_key = Column(String(255), nullable=True)
-    
-    # DeepSeek API
-    deepseek_api_key = Column(String(255), nullable=True)
-    deepseek_enabled = Column(Boolean, default=False)  # Toggle para activar/desactivar DeepSeek
-    
+    # Binance Testnet API keys (para Paper Trading) — encriptados en BD
+    binance_testnet_api_key = Column(EncryptedString(512), nullable=True)
+    binance_testnet_secret_key = Column(EncryptedString(512), nullable=True)
+
+    # Binance Real API keys (para Real Trading) — encriptados en BD
+    binance_real_api_key = Column(EncryptedString(512), nullable=True)
+    binance_real_secret_key = Column(EncryptedString(512), nullable=True)
+
+    # DeepSeek API — encriptado en BD
+    deepseek_api_key = Column(EncryptedString(512), nullable=True)
+    deepseek_enabled = Column(Boolean, default=False)
+
     # SMTP Configuration for email notifications
     smtp_host = Column(String(255), nullable=True)
     smtp_port = Column(Integer, nullable=True)
     smtp_user = Column(String(255), nullable=True)
-    smtp_password = Column(String(255), nullable=True)
+    smtp_password = Column(EncryptedString(512), nullable=True)  # encriptado en BD
     smtp_from_email = Column(String(255), nullable=True)
     smtp_enabled = Column(Boolean, default=False)
-    
-    # Telegram Bot Configuration
-    telegram_bot_token = Column(String(255), nullable=True)
+
+    # Telegram Bot Configuration — token encriptado en BD
+    telegram_bot_token = Column(EncryptedString(512), nullable=True)
     telegram_chat_id = Column(String(100), nullable=True)
     telegram_enabled = Column(Boolean, default=False)
     

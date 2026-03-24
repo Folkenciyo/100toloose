@@ -32,6 +32,10 @@ class BinanceWebSocket:
         self.latest_prices: Dict[str, float] = {}
         self.latest_klines: Dict[str, dict] = {}
         self._reconnect_delay = 5
+        self._reconnect_delay_min = 5
+        self._reconnect_delay_max = 60
+        self._reconnect_failures = 0
+        self._reconnect_failures_alert_threshold = 5
         self._task: Optional[asyncio.Task] = None
     
     async def start(self, symbols: list[str] = None):
@@ -64,18 +68,32 @@ class BinanceWebSocket:
         logger.info("🔌 WebSocket stopped")
     
     async def _run(self):
-        """Loop principal de conexión"""
+        """Loop principal de conexión con backoff exponencial"""
         while self.running:
             try:
                 await self._connect_and_listen()
+                # Successful connection — reset backoff
+                self._reconnect_delay = self._reconnect_delay_min
+                self._reconnect_failures = 0
             except ConnectionClosed as e:
                 logger.warning(f"WebSocket connection closed: {e}")
+                self._reconnect_failures += 1
             except Exception as e:
                 logger.error(f"WebSocket error: {e}")
-            
+                self._reconnect_failures += 1
+
             if self.running:
-                logger.info(f"Reconnecting in {self._reconnect_delay}s...")
+                if self._reconnect_failures >= self._reconnect_failures_alert_threshold:
+                    logger.critical(
+                        f"🚨 WebSocket has failed {self._reconnect_failures} times in a row. "
+                        "SL/TP monitoring is degraded."
+                    )
+                logger.info(f"Reconnecting in {self._reconnect_delay}s... (attempt #{self._reconnect_failures})")
                 await asyncio.sleep(self._reconnect_delay)
+                # Exponential backoff: double delay up to max
+                self._reconnect_delay = min(
+                    self._reconnect_delay * 2, self._reconnect_delay_max
+                )
     
     async def _connect_and_listen(self):
         """Conecta y escucha mensajes"""

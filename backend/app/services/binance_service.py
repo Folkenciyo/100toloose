@@ -157,9 +157,71 @@ class BinanceService:
         """Get list of available trading symbols"""
         if not self._exchange_info:
             self._exchange_info = await self._request("GET", "/exchangeInfo")
-        
+
         symbols = [s["symbol"] for s in self._exchange_info["symbols"] if s["status"] == "TRADING"]
         return symbols
+
+    async def get_symbol_filters(self, symbol: str) -> Dict[str, Any]:
+        """Return LOT_SIZE and MIN_NOTIONAL filters for a symbol."""
+        if not self._exchange_info:
+            self._exchange_info = await self._request("GET", "/exchangeInfo")
+
+        symbol_info = next(
+            (s for s in self._exchange_info["symbols"] if s["symbol"] == symbol),
+            None
+        )
+        if not symbol_info:
+            raise ValueError(f"Symbol {symbol} not found in exchange info")
+
+        filters: Dict[str, Any] = {}
+        for f in symbol_info.get("filters", []):
+            ft = f["filterType"]
+            if ft == "LOT_SIZE":
+                filters["min_qty"] = float(f["minQty"])
+                filters["max_qty"] = float(f["maxQty"])
+                filters["step_size"] = float(f["stepSize"])
+            elif ft in ("MIN_NOTIONAL", "NOTIONAL"):
+                filters["min_notional"] = float(f.get("minNotional", f.get("notional", 0)))
+        return filters
+
+    def round_step_size(self, quantity: float, step_size: float) -> float:
+        """Round quantity down to the nearest valid step_size."""
+        if step_size == 0:
+            return quantity
+        precision = len(f"{step_size:.10f}".rstrip("0").split(".")[-1])
+        factor = 1 / step_size
+        return round(int(quantity * factor) / factor, precision)
+
+    async def validate_and_round_quantity(
+        self, symbol: str, quantity: float, price: float
+    ) -> float:
+        """Validate quantity against Binance LOT_SIZE and MIN_NOTIONAL rules.
+
+        Raises ValueError if the order cannot be placed.
+        Returns the quantity rounded to the correct step_size.
+        """
+        filters = await self.get_symbol_filters(symbol)
+
+        step_size = filters.get("step_size", 0)
+        min_qty = filters.get("min_qty", 0)
+        min_notional = filters.get("min_notional", 0)
+
+        rounded = self.round_step_size(quantity, step_size) if step_size else quantity
+
+        if rounded < min_qty:
+            raise ValueError(
+                f"{symbol}: quantity {rounded} is below min_qty {min_qty}. "
+                f"Increase max_trade_amount in the strategy."
+            )
+
+        notional = rounded * price
+        if notional < min_notional:
+            raise ValueError(
+                f"{symbol}: order value ${notional:.2f} is below Binance MIN_NOTIONAL ${min_notional:.2f}. "
+                f"Increase max_trade_amount in the strategy."
+            )
+
+        return rounded
     
     async def get_order_book(self, symbol: str, limit: int = 20) -> Dict[str, Any]:
         """Get order book for a symbol"""

@@ -1,8 +1,8 @@
 import axios from 'axios'
 import { logger } from './logger'
 
-// En desarrollo usa puerto 8000 directo, en producción usa NGINX (puerto 80)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost'
+// Empty string = relative URLs → Vite proxy forwards /api/* to backend:8000
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 const api = axios.create({
   baseURL: `${API_URL}/api/v1`,

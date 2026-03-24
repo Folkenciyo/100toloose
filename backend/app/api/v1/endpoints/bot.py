@@ -54,7 +54,7 @@ async def start_bot(
         return {"message": "Bot started successfully", "status": "running"}
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to start bot. Check server logs.")
 
 
 @router.post("/stop")
@@ -74,7 +74,7 @@ async def stop_bot(current_user: User = Depends(get_current_user)):
         return {"message": "Bot stopped successfully", "status": "stopped"}
     except Exception as e:
         logger.error(f"Failed to stop bot: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to stop bot. Check server logs.")
 
 
 @router.get("/stats")

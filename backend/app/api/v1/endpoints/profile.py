@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.logging_config import logger
 from app.models.user import User
 from app.schemas.profile import (
     ProfileSettingsUpdate,
@@ -13,7 +14,8 @@ from app.schemas.profile import (
     BinanceRealConfig,
     DeepSeekConfig,
     SMTPConfig,
-    TelegramConfig
+    TelegramConfig,
+    RiskConfig,
 )
 
 router = APIRouter()
@@ -61,7 +63,11 @@ async def get_profile_settings(
             bot_token="***" if user.telegram_bot_token else None,  # Don't expose token
             chat_id=user.telegram_chat_id,
             enabled=user.telegram_enabled if user.telegram_enabled else False
-        )
+        ),
+        risk=RiskConfig(
+            max_daily_loss_percent=user.max_daily_loss_percent,
+        ),
+        daily_loss_paused=bool(user.daily_loss_paused),
     )
 
 
@@ -140,7 +146,12 @@ async def update_profile_settings(
             user.telegram_chat_id = settings.telegram.chat_id
         if settings.telegram.enabled is not None:
             user.telegram_enabled = settings.telegram.enabled
-    
+
+    # Update Risk config
+    if settings.risk:
+        if settings.risk.max_daily_loss_percent is not None:
+            user.max_daily_loss_percent = max(0.1, min(100.0, settings.risk.max_daily_loss_percent))
+
     await db.commit()
     await db.refresh(user)
     
@@ -176,7 +187,11 @@ async def update_profile_settings(
             bot_token="***" if user.telegram_bot_token else None,
             chat_id=user.telegram_chat_id,
             enabled=user.telegram_enabled if user.telegram_enabled else False
-        )
+        ),
+        risk=RiskConfig(
+            max_daily_loss_percent=user.max_daily_loss_percent,
+        ),
+        daily_loss_paused=bool(user.daily_loss_paused),
     )
 
 
@@ -227,9 +242,10 @@ async def test_email(
         await email_service.send_test_email(user.email)
         return {"success": True, "message": "Test email sent successfully"}
     except Exception as e:
+        logger.error(f"Failed to send test email for user {current_user.username}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to send test email: {str(e)}"
+            detail="Failed to send test email. Check SMTP settings and logs."
         )
 
 
@@ -294,9 +310,10 @@ async def test_telegram(
                 detail="Bot is blocked or cannot send messages. Please unblock the bot and try again."
             )
         else:
+            logger.error(f"Failed to send Telegram test message for user {current_user.username}: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to send test message: {str(e)}"
+                detail="Failed to send test message. Check Telegram token and logs."
             )
 
 
@@ -369,9 +386,10 @@ async def test_telegram_trade_notification(
                 detail="Invalid bot token. Please check your Telegram bot token."
             )
         else:
+            logger.error(f"Failed to send Telegram trade notification for user {current_user.username}: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to send test trade notification: {str(e)}"
+                detail="Failed to send test trade notification. Check Telegram token and logs."
             )
 
 
@@ -532,8 +550,9 @@ async def get_telegram_chat_id(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to get Telegram Chat ID for user {current_user.username}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get Chat ID: {str(e)}"
+            detail="Failed to get Chat ID. Check Telegram token and logs."
         )
 

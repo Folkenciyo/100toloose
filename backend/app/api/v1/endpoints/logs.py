@@ -7,7 +7,7 @@ from typing import Optional, Literal
 from pathlib import Path
 import os
 
-from app.core.security import get_current_user
+from app.core.security import get_current_superuser
 from app.models.user import User
 from app.core.logging_config import logger
 
@@ -18,7 +18,7 @@ LOGS_DIR = Path("/app/logs")
 
 @router.get("/")
 async def list_log_files(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_superuser)
 ):
     """Lista todos los archivos de log disponibles"""
     if not LOGS_DIR.exists():
@@ -51,7 +51,7 @@ async def list_log_files(
 async def view_log(
     log_type: Literal["app", "error", "trades", "api", "deepseek", "email", "telegram"] = "app",
     lines: int = Query(default=100, ge=1, le=1000),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_superuser)
 ):
     """
     Ver contenido de un archivo de log
@@ -79,14 +79,14 @@ async def view_log(
         }
     except Exception as e:
         logger.error(f"Error reading log file {log_type}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error reading log file")
 
 
 @router.get("/view/{log_type}/raw", response_class=PlainTextResponse)
 async def view_log_raw(
     log_type: Literal["app", "error", "trades", "api", "deepseek", "email", "telegram"] = "app",
     lines: int = Query(default=100, ge=1, le=1000),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_superuser)
 ):
     """Ver log en formato texto plano (para terminal/curl)"""
     log_file = LOGS_DIR / f"{log_type}.log"
@@ -101,12 +101,13 @@ async def view_log_raw(
         last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
         return "".join(last_lines)
     except Exception as e:
-        return f"Error: {str(e)}"
+        logger.error(f"Error reading raw log {log_type}: {e}")
+        return "Error reading log file"
 
 
 @router.get("/stats")
 async def log_stats(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_superuser)
 ):
     """Estadísticas de los logs"""
     if not LOGS_DIR.exists():
@@ -153,12 +154,9 @@ async def log_stats(
 @router.delete("/clear/{log_type}")
 async def clear_log(
     log_type: Literal["app", "error", "trades", "api", "deepseek", "email", "telegram"] = "app",
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_superuser)
 ):
     """Limpiar un archivo de log (solo superuser)"""
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Only superusers can clear logs")
-    
     log_file = LOGS_DIR / f"{log_type}.log"
     
     if not log_file.exists():
@@ -174,6 +172,6 @@ async def clear_log(
         return {"message": f"Log file '{log_type}.log' cleared successfully"}
     except Exception as e:
         logger.error(f"Error clearing log file {log_type}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error clearing log file")
 
 

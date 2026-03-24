@@ -27,9 +27,9 @@ services:
     container_name: 100toloose-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: Folkencillo
-      POSTGRES_PASSWORD: 7887Folkencillo!
-      POSTGRES_DB: 100toloose-db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -37,7 +37,7 @@ services:
     networks:
       - trading-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U Folkencillo -d 100toloose-db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,8 +48,8 @@ services:
     container_name: 100toloose-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@100toloose.com
-      PGADMIN_DEFAULT_PASSWORD: 7887Folkencillo!
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
     ports:
       - "5050:80"
     volumes:
@@ -85,9 +85,10 @@ services:
     container_name: 100toloose-backend
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql://Folkencillo:7887Folkencillo!@db:5432/100toloose-db
-      - REDIS_URL=redis://redis:6379
-      - SECRET_KEY=${SECRET_KEY:-supersecretkey123changeinthisproduction}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - BINANCE_API_KEY=${BINANCE_API_KEY:-}
       - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY:-}
       - BINANCE_TESTNET=${BINANCE_TESTNET:-true}
@@ -95,6 +96,7 @@ services:
       - "8000"
     ports:
       - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
       - backend_logs:/app/logs
@@ -121,7 +123,7 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=http://localhost
+      - VITE_API_URL=${VITE_API_URL:-http://localhost}
     depends_on:
       - backend
     networks:

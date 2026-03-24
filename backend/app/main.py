@@ -20,6 +20,8 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     
     # Create database tables
+    # NOTE: In production, disable this and use: docker compose exec backend alembic upgrade head
+    # This is kept for local development only.
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -98,7 +100,13 @@ app.add_middleware(LoggingMiddleware)
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost", "http://127.0.0.1"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost",
+        "http://127.0.0.1",
+        "https://100toloose.folkenland.online",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

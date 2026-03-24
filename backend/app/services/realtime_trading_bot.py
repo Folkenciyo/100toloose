@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from collections import deque
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, update, func
 
 from app.core.logging_config import logger, trade_logger, deepseek_logger, email_logger, telegram_logger
 from app.core.config import settings
@@ -96,14 +96,93 @@ class RealtimeTradingBot:
             binance_ws.on_price_update(symbol, self._on_price_update)
             binance_ws.on_kline_close(symbol, self._on_kline_close)
         
+        # Reconciliar trades abiertos en BD contra Binance (por si el bot se cayó)
+        await self._reconcile_open_trades()
+
         # Iniciar loop de monitoreo de trades abiertos
         asyncio.create_task(self._monitor_open_trades())
-        
+
         # Iniciar loop de recarga de estrategias
         asyncio.create_task(self._reload_strategies_loop())
-        
+
         trade_logger.info("✅ Realtime bot fully initialized")
     
+    async def _reconcile_open_trades(self):
+        """Al arrancar, verifica el estado real de los trades OPEN en BD contra Binance.
+
+        Detecta trades que se quedaron OPEN en BD pero la orden fue ejecutada/cancelada
+        en Binance mientras el bot estaba caído, y los marca como CLOSED o CANCELLED.
+        Solo actúa en trades con binance_order_id; los sin order ID (simulación pura) se dejan.
+        """
+        trade_logger.info("🔄 Reconciling open trades against Binance...")
+        try:
+            async with self.db_session_factory() as db:
+                result = await db.execute(
+                    select(Trade).where(Trade.status == TradeStatus.OPEN)
+                )
+                open_trades = result.scalars().all()
+
+                if not open_trades:
+                    trade_logger.info("   No open trades to reconcile")
+                    return
+
+                trade_logger.info(f"   Found {len(open_trades)} open trade(s) to check")
+
+                for trade in open_trades:
+                    # Trades sin order ID son simulaciones puras — no hay nada que verificar
+                    if not trade.binance_order_id:
+                        continue
+
+                    # Obtener el usuario y sus API keys
+                    user_result = await db.execute(
+                        select(User).where(User.id == trade.user_id)
+                    )
+                    user = user_result.scalar_one_or_none()
+                    if not user:
+                        continue
+
+                    api_key = user.binance_testnet_api_key if user.paper_trading else user.binance_real_api_key
+                    secret_key = user.binance_testnet_secret_key if user.paper_trading else user.binance_real_secret_key
+
+                    if not api_key or not secret_key:
+                        continue
+
+                    try:
+                        svc = BinanceService(
+                            api_key=api_key,
+                            secret_key=secret_key,
+                            use_testnet=user.paper_trading,
+                        )
+                        order = await svc.get_order_status(
+                            symbol=trade.symbol,
+                            order_id=int(trade.binance_order_id),
+                        )
+                        await svc.close()
+
+                        order_status = order.get("status", "")
+
+                        if order_status in ("FILLED", "PARTIALLY_FILLED"):
+                            # La orden se ejecutó — el trade sigue abierto, correcto
+                            trade_logger.info(
+                                f"   ✅ Trade {trade.id} ({trade.symbol}) confirmed OPEN on Binance"
+                            )
+                        elif order_status in ("CANCELED", "REJECTED", "EXPIRED"):
+                            # La orden fue cancelada en Binance — marcar como CANCELLED en BD
+                            trade.status = TradeStatus.CANCELLED
+                            trade.closed_at = datetime.utcnow()
+                            await db.commit()
+                            trade_logger.warning(
+                                f"   ⚠️ Trade {trade.id} ({trade.symbol}) was {order_status} on Binance — marked CANCELLED"
+                            )
+
+                    except Exception as e:
+                        trade_logger.error(
+                            f"   ❌ Could not reconcile trade {trade.id} ({trade.symbol}): {e}"
+                        )
+
+        except Exception as e:
+            trade_logger.error(f"Reconciliation error: {e}")
+
     async def stop(self):
         """Detiene el bot"""
         self.running = False
@@ -223,7 +302,11 @@ class RealtimeTradingBot:
                 user = user_result.scalar_one_or_none()
                 if not user:
                     continue
-                
+
+                # Verificar límite de pérdida diaria
+                if await self._check_daily_loss_limit(db, user):
+                    continue  # Límite superado, no operar
+
                 # Obtener señal técnica según tipo de estrategia
                 technical_signal = self._get_signal(strategy, rsi, macd, bollinger, current_price)
                 
@@ -376,7 +459,76 @@ class RealtimeTradingBot:
                     else:
                         trade_logger.info(f"⏸️  TRADE SKIPPED: {symbol} | Reason: {execution_reason}")
     
-    def _get_signal(self, strategy: Strategy, rsi: dict, macd: dict, 
+    async def _check_daily_loss_limit(self, db: AsyncSession, user: User) -> bool:
+        """Comprueba si el usuario ha superado el límite de pérdida diaria.
+
+        Returns True si se debe bloquear el trading (límite alcanzado).
+        Reinicia automáticamente el contador si ya pasó el día.
+        """
+        now = datetime.utcnow()
+
+        # Reiniciar pausa si ya pasaron 24h desde que se activó
+        if user.daily_loss_paused and user.daily_loss_reset_at:
+            if now >= user.daily_loss_reset_at:
+                user.daily_loss_paused = False
+                user.daily_loss_reset_at = None
+                await db.commit()
+                trade_logger.info(f"🔄 Daily loss limit reset for user {user.username}")
+
+        if user.daily_loss_paused:
+            trade_logger.warning(
+                f"⏸️  Trading paused for user {user.username} — daily loss limit reached"
+            )
+            return True
+
+        # Calcular pérdidas del día (solo trades cerrados hoy con P&L negativo)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        result = await db.execute(
+            select(func.sum(TradeModel.profit_loss)).where(
+                TradeModel.user_id == user.id,
+                TradeModel.status == TradeStatus.CLOSED,
+                TradeModel.closed_at >= today_start,
+                TradeModel.profit_loss < 0,
+            )
+        )
+        daily_loss = abs(result.scalar() or 0.0)
+
+        max_allowed_loss = user.initial_balance * (user.max_daily_loss_percent / 100)
+
+        if daily_loss >= max_allowed_loss:
+            user.daily_loss_paused = True
+            user.daily_loss_reset_at = today_start + timedelta(days=1)
+            await db.commit()
+
+            trade_logger.critical(
+                f"🚨 DAILY LOSS LIMIT REACHED for {user.username}: "
+                f"${daily_loss:.2f} >= ${max_allowed_loss:.2f} "
+                f"({user.max_daily_loss_percent}% of ${user.initial_balance:.2f}). "
+                f"Trading paused until {user.daily_loss_reset_at}"
+            )
+
+            # Notificar por Telegram si está configurado
+            if user.telegram_enabled and user.telegram_bot_token and user.telegram_chat_id:
+                try:
+                    tg = TelegramService(
+                        bot_token=user.telegram_bot_token,
+                        chat_id=user.telegram_chat_id
+                    )
+                    await tg.send_message(
+                        f"🚨 *LÍMITE DE PÉRDIDA DIARIA ALCANZADO*\n\n"
+                        f"Pérdida del día: *${daily_loss:.2f}*\n"
+                        f"Límite configurado: *${max_allowed_loss:.2f}* ({user.max_daily_loss_percent}%)\n\n"
+                        f"El bot ha pausado el trading automáticamente hasta mañana."
+                    )
+                    await tg.close()
+                except Exception as e:
+                    telegram_logger.error(f"Failed to send daily loss alert: {e}")
+
+            return True
+
+        return False
+
+    def _get_signal(self, strategy: Strategy, rsi: dict, macd: dict,
                     bollinger: dict, price: float) -> Optional[str]:
         """Determina señal de trading según la estrategia"""
         
@@ -457,8 +609,16 @@ class RealtimeTradingBot:
             if not user:
                 return None
             
-            # Calcular cantidad
-            quantity = strategy.max_trade_amount / price
+            # Calcular cantidad y validar reglas Binance (LOT_SIZE, MIN_NOTIONAL)
+            raw_quantity = strategy.max_trade_amount / price
+            try:
+                quantity = await self.binance.validate_and_round_quantity(
+                    symbol, raw_quantity, price
+                )
+            except ValueError as e:
+                trade_logger.warning(f"⚠️ Skipping trade — Binance filter violation: {e}")
+                self.stats["trades_skipped"] += 1
+                return None
             trade_value = price * quantity
             
             # Obtener las API keys correctas según el modo
@@ -561,7 +721,7 @@ class RealtimeTradingBot:
             await db.refresh(trade)
             
             self.stats["trades_executed"] += 1
-            
+
             trade_logger.info("=" * 50)
             trade_logger.info(f"✅ TRADE EXECUTED")
             trade_logger.info(f"   Symbol: {symbol}")
@@ -576,40 +736,27 @@ class RealtimeTradingBot:
             if binance_order_id:
                 trade_logger.info(f"   Binance Order ID: {binance_order_id}")
             trade_logger.info("=" * 50)
-            
-            return trade  # Retornar el trade creado
-            trade_logger.info(f"✅ TRADE EXECUTED")
-            trade_logger.info(f"   Symbol: {symbol}")
-            trade_logger.info(f"   Type: {signal}")
-            trade_logger.info(f"   Price: ${price:,.2f}")
-            trade_logger.info(f"   Quantity: {quantity:.6f}")
-            trade_logger.info(f"   Value: ${trade_value:,.2f}")
-            trade_logger.info(f"   Stop Loss: ${stop_loss:,.2f}")
-            trade_logger.info(f"   Take Profit: ${take_profit:,.2f}")
-            trade_logger.info(f"   Strategy: {strategy.name}")
-            trade_logger.info(f"   Paper: {'Yes' if user.paper_trading else 'No'}")
-            trade_logger.info("=" * 50)
-            
+
             # Notificar al cliente
             await client_ws_manager.send_trade_update(str(user.id), {
                 "id": trade.id,
                 "symbol": symbol,
                 "type": signal,
-                "price": price,
-                "quantity": quantity,
+                "price": actual_executed_price,
+                "quantity": actual_executed_quantity,
                 "status": "OPEN"
             })
-            
+
             # Enviar notificaciones
             await self._send_trade_notifications(
                 user=user,
                 trade_type=signal.lower(),
                 symbol=symbol,
-                price=price,
-                quantity=quantity,
+                price=actual_executed_price,
+                quantity=actual_executed_quantity,
                 trade_id=trade.id
             )
-            
+
             # Agregar a cola de resumen por email
             if user.summary_email:
                 if user.id not in self.email_summary_queue:
@@ -617,33 +764,38 @@ class RealtimeTradingBot:
                 self.email_summary_queue[user.id].append({
                     "symbol": symbol,
                     "type": signal,
-                    "entry_price": price,
+                    "entry_price": actual_executed_price,
                     "exit_price": None,
                     "profit_loss": None,
                     "status": "OPEN",
                     "opened_at": datetime.utcnow(),
                     "closed_at": None
                 })
+
+            return trade
             
         except Exception as e:
             self.stats["errors"] += 1
             trade_logger.error(f"❌ Trade execution failed: {e}")
     
     async def _check_price_triggers(self, symbol: str, price: float):
-        """Verifica SL/TP para trades abiertos en tiempo real"""
+        """Verifica SL/TP para trades abiertos en tiempo real.
+
+        Usa SELECT FOR UPDATE para evitar la race condition donde dos callbacks
+        concurrentes cierran el mismo trade dos veces.
+        """
         async with self.db_session_factory() as db:
             result = await db.execute(
-                select(Trade).where(
-                    Trade.symbol == symbol,
-                    Trade.status == TradeStatus.OPEN
-                )
+                select(Trade)
+                .where(Trade.symbol == symbol, Trade.status == TradeStatus.OPEN)
+                .with_for_update(skip_locked=True)  # skip_locked: otro callback ya lo está cerrando
             )
             trades = result.scalars().all()
-            
+
             for trade in trades:
                 should_close = False
                 reason = ""
-                
+
                 if trade.trade_type == TradeType.BUY:
                     if trade.stop_loss and price <= trade.stop_loss:
                         should_close = True
@@ -658,7 +810,7 @@ class RealtimeTradingBot:
                     elif trade.take_profit and price <= trade.take_profit:
                         should_close = True
                         reason = "TAKE_PROFIT"
-                
+
                 if should_close:
                     await self._close_trade(db, trade, price, reason)
     
@@ -721,12 +873,18 @@ class RealtimeTradingBot:
                 trade_logger.error(f"❌ Failed to execute Binance close order: {e}")
                 # Continuar con el cierre aunque falle la orden (para no perder el trade)
         
-        # Calcular P&L
+        # Calcular P&L neto (descontando comisiones de apertura y cierre)
+        fee_rate = settings.TRADING_FEE_RATE
+        entry_fee = trade.entry_price * actual_exit_quantity * fee_rate
+        exit_fee = actual_exit_price * actual_exit_quantity * fee_rate
+        total_fees = entry_fee + exit_fee
+
         if trade.trade_type == TradeType.BUY:
-            profit_loss = (actual_exit_price - trade.entry_price) * actual_exit_quantity
+            gross_profit = (actual_exit_price - trade.entry_price) * actual_exit_quantity
         else:
-            profit_loss = (trade.entry_price - actual_exit_price) * actual_exit_quantity
-        
+            gross_profit = (trade.entry_price - actual_exit_price) * actual_exit_quantity
+
+        profit_loss = gross_profit - total_fees
         profit_loss_percent = (profit_loss / (trade.entry_price * trade.quantity)) * 100
         
         # Actualizar trade

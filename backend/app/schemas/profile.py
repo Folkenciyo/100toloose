@@ -32,6 +32,10 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
 
 
+class RiskConfig(BaseModel):
+    max_daily_loss_percent: Optional[float] = None  # % de initial_balance (ej: 5.0 = 5%)
+
+
 class ProfileInfoConfig(BaseModel):
     profile_name: Optional[str] = None
     summary_email: Optional[EmailStr] = None
@@ -47,6 +51,7 @@ class ProfileSettingsUpdate(BaseModel):
     deepseek: Optional[DeepSeekConfig] = None
     smtp: Optional[SMTPConfig] = None
     telegram: Optional[TelegramConfig] = None
+    risk: Optional[RiskConfig] = None
 
 
 class ProfileSettingsResponse(BaseModel):
@@ -56,6 +61,8 @@ class ProfileSettingsResponse(BaseModel):
     deepseek: DeepSeekConfig
     smtp: SMTPConfig
     telegram: TelegramConfig
+    risk: RiskConfig
+    daily_loss_paused: bool = False
     
     class Config:
         from_attributes = True

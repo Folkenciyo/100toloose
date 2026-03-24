@@ -4,6 +4,7 @@ from sqlalchemy import select
 from typing import List
 from datetime import datetime
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.logging_config import trade_logger, logger
@@ -142,12 +143,18 @@ async def close_trade(
     current_price = await binance_service.get_symbol_price(trade.symbol)
     trade_logger.info(f"   └─ Exit price: ${current_price:,.2f}")
     
-    # Calculate P&L
+    # Calculate P&L neto (descontando comisiones de apertura y cierre)
+    fee_rate = settings.TRADING_FEE_RATE
+    entry_fee = trade.entry_price * trade.quantity * fee_rate
+    exit_fee = current_price * trade.quantity * fee_rate
+    total_fees = entry_fee + exit_fee
+
     if trade.trade_type == TradeType.BUY:
-        profit_loss = (current_price - trade.entry_price) * trade.quantity
+        gross_profit = (current_price - trade.entry_price) * trade.quantity
     else:
-        profit_loss = (trade.entry_price - current_price) * trade.quantity
-    
+        gross_profit = (trade.entry_price - current_price) * trade.quantity
+
+    profit_loss = gross_profit - total_fees
     profit_loss_percent = (profit_loss / (trade.entry_price * trade.quantity)) * 100
     
     # Update trade
